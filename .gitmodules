@@ -1,3 +1,6 @@
 [submodule "external/json-c"]
 	path = external/json-c
 	url = https://github.com/Purplesmaug96/json-c.git
+[submodule "external/UndertaleModTool"]
+	path = external/UndertaleModTool
+	url = https://github.com/Purplesmaug96/UndertaleModTool.git
