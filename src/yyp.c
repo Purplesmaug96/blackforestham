@@ -2,6 +2,7 @@
 #include "common.h"
 
 #include <json-c/json.h>
+#include <json-c/json_types.h>
 
 yyp_t* yyp_parse_file(char* file) {
     yyp_t* yyp = safe_malloc(sizeof(yyp_t));
@@ -31,10 +32,16 @@ yyp_t* yyp_parse_file(char* file) {
 
     fclose(fp);
 
+    yyp->json.root_obj = json_tokener_parse(yyp->src);
+
+    printf("%s", json_object_to_json_string(yyp->json.root_obj));
+
     return yyp;
 }
 
 void yyp_free(yyp_t* yyp) {
+    json_object_put(yyp->json.root_obj);
+
     free(yyp->name);
     free(yyp->src);
     free(yyp);
