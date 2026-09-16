@@ -35,6 +35,8 @@ int main(int argc, char* argv[]) {
 
     yyp_t* yyp = yyp_parse_file(args.source_files[0]);
 
+    yyp_dump(yyp, stdout);
+
     yyp_free(yyp);
 
     return 0;
