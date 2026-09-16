@@ -9,8 +9,10 @@ set(CMAKE_C_STANDARD_REQUIRED true)
 
 add_compile_options(-Wall -Wextra -Werror)
 
+# TODO: Come up with a better name than gm_things
 add_library(libbfh
     src/yyp.c
+    src/gm_things/folder.c
 )
 
 target_compile_definitions(libbfh PUBLIC LANG_EN)
