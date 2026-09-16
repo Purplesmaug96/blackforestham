@@ -1,1 +1,9 @@
 build*/
+gitignore/
+
+# .NET build output (dotnet build/publish, at any depth)
+bin/
+obj/
+.vs/
+*.user
+*.suo

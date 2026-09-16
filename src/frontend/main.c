@@ -4,6 +4,7 @@
 #include "args.h"
 
 #include "yyp.h"
+#include "bridge/bfh_bridge.h"
 
 char* binary_name = nullptr;
 
@@ -14,7 +15,9 @@ static void usage(FILE* out)
             "\n"
             "options:\n"
             "  -v, --version        print version and exit\n"
-            "  -h, --help           show this help\n",
+            "  -h, --help           show this help\n"
+            "  -o, --output <file>  compile the project to a GameMaker data.win\n"
+            "                       (requires the bridge, see bfh_bridge.h)\n",
             binary_name);
 }
 
@@ -35,8 +38,22 @@ int main(int argc, char* argv[]) {
 
     yyp_t* yyp = yyp_parse_file(args.source_files[0]);
 
-    yyp_dump(yyp, stdout);
+    if (args.output_file != nullptr) {
+        bfh_bridge_status_t status = bfh_bridge_init();
+        if (status == BFH_BRIDGE_OK) {
+            status = bfh_bridge_compile(yyp->src, args.output_file);
+        }
 
+        if (status != BFH_BRIDGE_OK) {
+            fprintf(stderr, "failed to compile to %s\n", args.output_file);
+            yyp_free(yyp);
+            return 1;
+        }
+    } else {
+        yyp_dump(yyp, stdout);
+    }
+
+    bfh_bridge_shutdown();
     yyp_free(yyp);
 
     return 0;

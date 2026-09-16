@@ -3,6 +3,7 @@
 typedef struct {
     bool version;
     bool help;
+    char* output_file;
     char** source_files;
     int source_files_count;
 } cli_args_t;

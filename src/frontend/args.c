@@ -7,6 +7,7 @@ static struct option options[] =
 {
     {"version", no_argument, nullptr, 'v'},
     {"help", no_argument, nullptr, 'h'},
+    {"output", required_argument, nullptr, 'o'},
     {nullptr, 0, nullptr, 0}
 };
 
@@ -15,7 +16,7 @@ cli_args_t parse_args(int argc, char* argv[]) {
 
     // loop over all of the options
     char ch = '\0';
-    while ((ch = getopt_long(argc, argv, "vh:", options, nullptr)) != -1)
+    while ((ch = getopt_long(argc, argv, "vho:", options, nullptr)) != -1)
     {
         switch (ch)
         {
@@ -24,6 +25,9 @@ cli_args_t parse_args(int argc, char* argv[]) {
                 break;
             case 'h':
                 args.help = true;
+                break;
+            case 'o':
+                args.output_file = optarg;
                 break;
         }
     }
