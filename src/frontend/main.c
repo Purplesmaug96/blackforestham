@@ -3,7 +3,7 @@
 #include <string.h>
 #include "args.h"
 
-#include <unistd.h>
+#include "yyp.h"
 
 char* binary_name = nullptr;
 
@@ -28,10 +28,14 @@ int main(int argc, char* argv[]) {
         exit(0);
     }
 
-    if (args.help) {
+    if (args.help || args.source_files_count != 1) {
         usage(stdout);
         exit(0);
     }
+
+    yyp_t* yyp = yyp_parse_file(args.source_files[0]);
+
+    yyp_free(yyp);
 
     return 0;
 }
