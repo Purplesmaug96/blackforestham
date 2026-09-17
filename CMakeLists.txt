@@ -13,6 +13,7 @@ add_compile_options(-Wall -Wextra -Werror)
 add_library(libbfh
     src/yyp.c
     src/gm_things/folder.c
+    src/gm_things/room.c
 )
 
 target_compile_definitions(libbfh PUBLIC LANG_EN)
@@ -69,7 +70,6 @@ if(ENABLE_DOTNET_BRIDGE AND DOTNET_EXECUTABLE)
     add_library(bridge
         src/bridge/bridge.c
         src/bridge/dotnet.c
-        src/bridge/bridge_yyp.c
     )
 
     target_include_directories(bridge PUBLIC src)

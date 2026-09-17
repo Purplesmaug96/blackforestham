@@ -11,12 +11,12 @@
 // UNMANAGEDCALLERSONLY_METHOD, as defined in coreclr_delegates.h
 #define DOTNET_UNMANAGEDCALLERSONLY_METHOD ((const char*)(uintptr_t)-1)
 
-// Forward declaration of the flattened project struct (defined in bridge.h);
-// only a pointer is ever passed around here.
-struct bridge_yyp;
+// Forward declaration of the parsed project struct (defined in yyp.h); only a
+// pointer is ever passed around here.
+struct yyp;
 
-// int32_t compile_fn(const struct bridge_yyp* yyp, const char* project_dir, const char* output_path)
-typedef int32_t (*compile_fn)(const struct bridge_yyp*, const char*, const char*);
+// int32_t compile_fn(const struct yyp* yyp, const char* project_dir, const char* output_path)
+typedef int32_t (*compile_fn)(const struct yyp*, const char*, const char*);
 
 
 // Locate libhostfxr.so, boot the runtime against the runtime config in
@@ -31,7 +31,7 @@ int dotnet_init(const char* bridge_dir, char* errbuf, size_t errbuf_size);
 const char* dotnet_last_error(void);
 
 // Invoke the already-resolved managed entry point. Returns its int status.
-int32_t dotnet_invoke(const struct bridge_yyp* yyp, const char* project_dir, const char* output_path);
+int32_t dotnet_invoke(const struct yyp* yyp, const char* project_dir, const char* output_path);
 
 // Close the runtime host context, if any.
 void dotnet_shutdown(void);

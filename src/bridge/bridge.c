@@ -68,7 +68,7 @@ bridge_status_t bridge_init() {
     return BRIDGE_OK;
 }
 
-bridge_status_t bridge_compile(const bridge_yyp_t* yyp, const char* project_dir, const char* output_path) {
+bridge_status_t bridge_compile(const yyp_t* yyp, const char* project_dir, const char* output_path) {
     if (!g_initialized) {
         fprintf(stderr, "bridge: bridge_init() was not called\n");
         return BRIDGE_ERR_NOT_INITIALIZED;

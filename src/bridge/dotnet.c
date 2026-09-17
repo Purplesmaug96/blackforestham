@@ -265,7 +265,7 @@ const char* dotnet_last_error(void) {
     return g_last_error;
 }
 
-int32_t dotnet_invoke(const struct bridge_yyp* yyp, const char* project_dir, const char* output_path) {
+int32_t dotnet_invoke(const struct yyp* yyp, const char* project_dir, const char* output_path) {
     if (g_compile == nullptr) {
         set_error("managed entry point is not resolved; call bridge_init() first");
         return -1;

@@ -39,24 +39,10 @@ int main(int argc, char* argv[]) {
     yyp_t* yyp = yyp_parse_file(args.source_files[0]);
 
     if (args.output_file != nullptr) {
-        char* project_dir = strdup(args.source_files[0]);
-        if (project_dir == nullptr) {
-            fprintf(stderr, "out of memory\n");
-            yyp_free(yyp);
-            return 1;
-        }
-        char* slash = strrchr(project_dir, '/');
-        if (slash != nullptr) {
-            *slash = '\0';
-        } else {
-            strcpy(project_dir, ".");
-        }
-
         bridge_status_t status = bridge_init();
         if (status == BRIDGE_OK) {
-            status = bridge_compile_yyp(yyp, project_dir, args.output_file);
+            status = bridge_compile(yyp, yyp->dir, args.output_file);
         }
-        free(project_dir);
 
         if (status != BRIDGE_OK) {
             fprintf(stderr, "failed to compile to %s\n", args.output_file);
