@@ -13,6 +13,6 @@ typedef enum bfh_bridge_status {
 
 bfh_bridge_status_t bfh_bridge_init();
 
-bfh_bridge_status_t bfh_bridge_compile(const char* yyp_json, const char* output_path);
+bfh_bridge_status_t bfh_bridge_compile(const char* yyp_json, const char* project_dir, const char* output_path);
 
 void bfh_bridge_shutdown();

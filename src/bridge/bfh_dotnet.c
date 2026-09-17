@@ -265,12 +265,12 @@ const char* bfh_dotnet_last_error(void) {
     return g_last_error;
 }
 
-int32_t bfh_dotnet_invoke(const char* yyp_json, const char* output_path) {
+int32_t bfh_dotnet_invoke(const char* yyp_json, const char* project_dir, const char* output_path) {
     if (g_compile == nullptr) {
         set_error("managed entry point is not resolved; call bfh_bridge_init() first");
         return -1;
     }
-    return g_compile(yyp_json, output_path);
+    return g_compile(yyp_json, project_dir, output_path);
 }
 
 void bfh_dotnet_shutdown(void) {

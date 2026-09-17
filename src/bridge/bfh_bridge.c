@@ -68,13 +68,13 @@ bfh_bridge_status_t bfh_bridge_init() {
     return BFH_BRIDGE_OK;
 }
 
-bfh_bridge_status_t bfh_bridge_compile(const char* yyp_json, const char* output_path) {
+bfh_bridge_status_t bfh_bridge_compile(const char* yyp_json, const char* project_dir, const char* output_path) {
     if (!g_initialized) {
         fprintf(stderr, "bfh_bridge: bfh_bridge_init() was not called\n");
         return BFH_BRIDGE_ERR_NOT_INITIALIZED;
     }
 
-    int32_t status = bfh_dotnet_invoke(yyp_json, output_path);
+    int32_t status = bfh_dotnet_invoke(yyp_json, project_dir, output_path);
     if (status != 0) {
         fprintf(stderr, "bfh_bridge: managed side returned %d\n", status);
         return BFH_BRIDGE_ERR_MANAGED_FAILED;
