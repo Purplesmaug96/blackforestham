@@ -38,15 +38,33 @@ if(ENABLE_DOTNET_BRIDGE)
 endif()
 
 if(ENABLE_DOTNET_BRIDGE AND DOTNET_EXECUTABLE)
-    add_custom_target(bridge_publish ALL
+    # Only publish the managed bridge when something it depends on actually
+    # changed. Without a real OUTPUT/DEPENDS pair, the custom target would run
+    # `dotnet publish` (a multi-second rebuild+restore) on every build.
+    file(GLOB_RECURSE BRIDGE_CS_SOURCES CONFIGURE_DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/bridge/csharp/Bridge/*.cs
+    )
+    file(GLOB_RECURSE BRIDGE_EXTERNAL_CS CONFIGURE_DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/UndertaleModTool/UndertaleModLib/*.cs
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/UndertaleModTool/Underanalyzer/Underanalyzer/*.cs
+    )
+
+    add_custom_command(
+        OUTPUT "${BRIDGE_OUTPUT_DIR}/Bridge.dll"
         COMMAND ${DOTNET_EXECUTABLE} publish
                 ${CMAKE_CURRENT_SOURCE_DIR}/src/bridge/csharp/Bridge/Bridge.csproj
                 -c Release
                 -o ${BRIDGE_OUTPUT_DIR}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        DEPENDS
+            ${BRIDGE_CS_SOURCES}
+            ${BRIDGE_EXTERNAL_CS}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/bridge/csharp/Bridge/Bridge.csproj
+            ${CMAKE_CURRENT_SOURCE_DIR}/external/UndertaleModTool/UndertaleModLib/UndertaleModLib.csproj
         COMMENT "Publishing the managed Bridge (UndertaleModLib backend) to ${BRIDGE_OUTPUT_DIR}"
         VERBATIM
     )
+    add_custom_target(bridge_publish ALL DEPENDS "${BRIDGE_OUTPUT_DIR}/Bridge.dll")
 
     add_library(bridge
         src/bridge/bridge.c
