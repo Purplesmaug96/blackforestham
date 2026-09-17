@@ -8,6 +8,7 @@
 #include "gm_things/folder.h"
 #include "gm_things/object.h"
 #include "gm_things/room.h"
+#include "gm_things/sprite.h"
 
 typedef struct {
     char* name;
@@ -40,6 +41,8 @@ typedef struct yyp {
     gm_room_t** rooms;
     int32_t object_count;
     gm_object_t** objects;
+    int32_t sprite_count;
+    gm_sprite_t** sprites;
 } yyp_t;
 
 yyp_t* yyp_parse_file(char* file);

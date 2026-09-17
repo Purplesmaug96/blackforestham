@@ -7,6 +7,7 @@ using UndertaleModLib;
 using UndertaleModLib.Compiler;
 using UndertaleModLib.Decompiler;
 using UndertaleModLib.Models;
+using UndertaleModLib.Util;
 
 // Native data contract (mirrored in src/yyp.h, src/gm_things/folder.h and
 // src/gm_things/room.h). The C side parses all project JSON; this side only
@@ -59,6 +60,8 @@ namespace BridgeLib
             public IntPtr Rooms;           // gm_room_t**
             public int ObjectCount;
             public IntPtr Objects;         // gm_object_t**
+            public int SpriteCount;
+            public IntPtr Sprites;         // gm_sprite_t**
         }
 
         // Mirror of yyp_resource_t in src/yyp.h.
@@ -233,6 +236,41 @@ namespace BridgeLib
             public IntPtr Events;          // gm_object_event_t*
         }
 
+        // Mirror of gm_sprite_t in src/gm_things/sprite.h.
+        [StructLayout(LayoutKind.Sequential)]
+        private struct GmSprite
+        {
+            public IntPtr Name;
+            public IntPtr Dir;
+            public uint Width;
+            public uint Height;
+            public int Type;
+            public int BBoxMode;
+            public int BBoxLeft;
+            public int BBoxRight;
+            public int BBoxBottom;
+            public int BBoxTop;
+            public int CollisionKind;
+            public int SepMasks;
+            public int OriginX;
+            public int OriginY;
+            public float PlaybackSpeed;
+            public int PlaybackSpeedType;
+            public int FrameCount;
+            public IntPtr Frames;          // char**
+            public int HasNineSlice;
+            public int NsLeft;
+            public int NsTop;
+            public int NsRight;
+            public int NsBottom;
+            public int NsEnabled;
+            public int NsTileMode0;
+            public int NsTileMode1;
+            public int NsTileMode2;
+            public int NsTileMode3;
+            public int NsTileMode4;
+        }
+
         /// <summary>
         /// Native entry point hosted by the C bridge via hostfxr.
         ///
@@ -324,6 +362,26 @@ namespace BridgeLib
             return name.Length != 0 && objectsByName.TryGetValue(name, out UndertaleGameObject? model) ? model : null;
         }
 
+        private static UndertaleSprite? ResolveSprite(Dictionary<string, UndertaleSprite> spritesByName, IntPtr namePtr)
+        {
+            string name = PtrToString(namePtr);
+            return name.Length != 0 && spritesByName.TryGetValue(name, out UndertaleSprite? model) ? model : null;
+        }
+
+        // Reads a NULL-terminated array of C strings (i.e. a char**).
+        private static string[] ReadPointerStringArray(IntPtr arrayPtr, int count)
+        {
+            if (count <= 0 || arrayPtr == IntPtr.Zero)
+                return Array.Empty<string>();
+
+            string[] result = new string[count];
+            for (int i = 0; i < count; i++)
+            {
+                result[i] = PtrToString(Marshal.ReadIntPtr(arrayPtr, i * IntPtr.Size));
+            }
+            return result;
+        }
+
         private static UndertaleData BuildData(Yyp yyp, string projectDir)
         {
             // %Name wins over displayName when both are present, mirroring GameMaker.
@@ -392,6 +450,13 @@ namespace BridgeLib
                 (yyp.VersionMajor == 2024 && yyp.VersionMinor >= 13);
             UndertaleChunkUILR uilr = usesRoomLayout2024_13 ? new() : null;
 
+            // Texture pages (TXTR) and their page items (TPAG) back every sprite
+            // frame. Each frame image is stored as its own embedded page (one
+            // frame per TXTR entry) rather than an atlas, which keeps this simple
+            // while texture groups/pages are out of scope.
+            UndertaleChunkTXTR txtr = new();
+            UndertaleChunkTPAG tpag = new();
+
             // Registered even though they stay empty: UndertaleResourceById only
             // writes a null reference as -1 when its target chunk exists. Without
             // these, null object/sprite/background references (common in rooms)
@@ -418,6 +483,8 @@ namespace BridgeLib
             Register("FUNC", func, typeof(UndertaleChunkFUNC));
             Register("SEQN", seqn, typeof(UndertaleChunkSEQN));
             if (uilr != null) Register("UILR", uilr, typeof(UndertaleChunkUILR));
+            Register("TXTR", txtr, typeof(UndertaleChunkTXTR));
+            Register("TPAG", tpag, typeof(UndertaleChunkTPAG));
             Register("OBJT", objt, typeof(UndertaleChunkOBJT));
             Register("SPRT", sprt, typeof(UndertaleChunkSPRT));
             Register("BGND", bgnd, typeof(UndertaleChunkBGND));
@@ -431,6 +498,7 @@ namespace BridgeLib
             YypResource[] resources = ReadPointerArray<YypResource>(yyp.Resources, yyp.ResourceCount);
             GmRoom[] rooms = ReadPointerArray<GmRoom>(yyp.Rooms, yyp.RoomCount);
             GmObject[] objects = ReadPointerArray<GmObject>(yyp.Objects, yyp.ObjectCount);
+            GmSprite[] sprites = ReadPointerArray<GmSprite>(yyp.Sprites, yyp.SpriteCount);
 
             // Code compiled from scripts, objects and room creation codes is queued
             // together so the global function cache sees every entry before linking.
@@ -438,12 +506,16 @@ namespace BridgeLib
 
             CreateScripts(data, projectDir, resources, compileQueue);
 
+            // Sprites must exist in the SPRT chunk before objects and rooms,
+            // which reference them by name.
+            Dictionary<string, UndertaleSprite> spritesByName = CreateSprites(data, projectDir, sprites);
+
             // Objects must exist in the OBJT chunk before rooms (instances/view
             // targets) and before compiling, so GML references like `obj_foo`
             // resolve to their object index.
-            Dictionary<string, UndertaleGameObject> objectsByName = CreateObjects(data, projectDir, objects, compileQueue);
+            Dictionary<string, UndertaleGameObject> objectsByName = CreateObjects(data, projectDir, objects, spritesByName, compileQueue);
 
-            CreateRooms(data, projectDir, rooms, gameName, objectsByName, compileQueue);
+            CreateRooms(data, projectDir, rooms, gameName, objectsByName, spritesByName, compileQueue);
             CompileQueued(data, compileQueue);
 
             return data;
@@ -509,7 +581,133 @@ namespace BridgeLib
             }
         }
 
+        private static Dictionary<string, UndertaleSprite> CreateSprites(UndertaleData data, string projectDir, GmSprite[] sprites)
+        {
+            // One embedded texture page (TXTR) per unique frame PNG, and one
+            // texture page item (TPAG) per frame. Sprites reference frames by
+            // GUID, so the frame directory is the sprite's own .yy directory.
+            var byName = new Dictionary<string, UndertaleSprite>(StringComparer.Ordinal);
+            var pagesByPath = new Dictionary<string, UndertaleEmbeddedTexture>(StringComparer.Ordinal);
+            int frameCount = 0;
+
+            foreach (GmSprite spr in sprites)
+            {
+                string name = PtrToString(spr.Name);
+
+                if (spr.Type != 0)
+                {
+                    // SWF/Spine/vector sprites are not supported yet; emit an
+                    // empty bitmap sprite so references still resolve.
+                    Report($"warning: sprite {name} has unsupported type {spr.Type}");
+                }
+
+                UndertaleSprite model = new()
+                {
+                    Name = data.Strings.MakeString(name),
+                    Width = spr.Width,
+                    Height = spr.Height,
+                    MarginLeft = spr.BBoxLeft,
+                    MarginRight = spr.BBoxRight,
+                    MarginBottom = spr.BBoxBottom,
+                    MarginTop = spr.BBoxTop,
+                    Transparent = true,
+                    Smooth = false,
+                    Preload = false,
+                    BBoxMode = (uint)spr.BBoxMode,
+                    SepMasks = (UndertaleSprite.SepMaskType)spr.SepMasks,
+                    OriginX = spr.OriginX,
+                    OriginY = spr.OriginY,
+                    // GameMaker Studio 2 always stores the extra sprite block
+                    // (playback speed, optional sequence/nine-slice pointers).
+                    IsSpecialType = true,
+                    SVersion = spr.HasNineSlice != 0 ? 3u : 1u,
+                    SSpriteType = UndertaleSprite.SpriteType.Normal,
+                    GMS2PlaybackSpeed = spr.PlaybackSpeed,
+                    GMS2PlaybackSpeedType = (AnimSpeedType)spr.PlaybackSpeedType,
+                };
+
+                if (spr.HasNineSlice != 0)
+                {
+                    model.V3NineSlice = new UndertaleSprite.NineSlice
+                    {
+                        Left = spr.NsLeft,
+                        Top = spr.NsTop,
+                        Right = spr.NsRight,
+                        Bottom = spr.NsBottom,
+                        Enabled = spr.NsEnabled != 0,
+                        TileModes = new[]
+                        {
+                            (UndertaleSprite.NineSlice.TileMode)spr.NsTileMode0,
+                            (UndertaleSprite.NineSlice.TileMode)spr.NsTileMode1,
+                            (UndertaleSprite.NineSlice.TileMode)spr.NsTileMode2,
+                            (UndertaleSprite.NineSlice.TileMode)spr.NsTileMode3,
+                            (UndertaleSprite.NineSlice.TileMode)spr.NsTileMode4,
+                        },
+                    };
+                }
+
+                string dir = Path.Combine(projectDir, PtrToString(spr.Dir).Replace('/', Path.DirectorySeparatorChar));
+                string[] guids = ReadPointerStringArray(spr.Frames, spr.FrameCount);
+                foreach (string guid in guids)
+                {
+                    if (guid.Length == 0)
+                        continue;
+
+                    string pngPath = Path.Combine(dir, guid + ".png");
+                    if (!File.Exists(pngPath))
+                    {
+                        Report($"warning: sprite {name} frame {guid} is missing ({pngPath})");
+                        continue;
+                    }
+
+                    if (!pagesByPath.TryGetValue(pngPath, out UndertaleEmbeddedTexture? page))
+                    {
+                        GMImage image = GMImage.FromPng(File.ReadAllBytes(pngPath), verifyHeader: true);
+                        page = new UndertaleEmbeddedTexture
+                        {
+                            Name = data.Strings.MakeString(guid),
+                            Scaled = 0,
+                            GeneratedMips = 1,
+                            TextureWidth = image.Width,
+                            TextureHeight = image.Height,
+                            IndexInGroup = 0,
+                            TextureData = new UndertaleEmbeddedTexture.TexData { Image = image },
+                        };
+                        data.EmbeddedTextures.Add(page);
+                        pagesByPath[pngPath] = page;
+                    }
+
+                    UndertaleTexturePageItem pageItem = new()
+                    {
+                        Name = data.Strings.MakeString(guid),
+                        SourceX = 0,
+                        SourceY = 0,
+                        SourceWidth = (ushort)model.Width,
+                        SourceHeight = (ushort)model.Height,
+                        TargetX = 0,
+                        TargetY = 0,
+                        TargetWidth = (ushort)model.Width,
+                        TargetHeight = (ushort)model.Height,
+                        BoundingWidth = (ushort)model.Width,
+                        BoundingHeight = (ushort)model.Height,
+                        TexturePage = page,
+                    };
+                    data.TexturePageItems.Add(pageItem);
+                    model.Textures.Add(new UndertaleSprite.TextureEntry { Texture = pageItem });
+                    frameCount++;
+                }
+
+                if (name.Length != 0)
+                    byName[name] = model;
+                data.Sprites.Add(model);
+            }
+
+            Report($"{sprites.Length} sprite(s), {frameCount} frame(s), {pagesByPath.Count} texture page(s) found");
+            return byName;
+        }
+
         private static Dictionary<string, UndertaleGameObject> CreateObjects(UndertaleData data, string projectDir, GmObject[] objects,
+                                                                            Dictionary<string, UndertaleSprite> spritesByName,
                                                                             List<(UndertaleCode code, string source)> compileQueue)
         {
             // Object references (parents, collision targets) are by name, so all
@@ -524,6 +722,8 @@ namespace BridgeLib
                 UndertaleGameObject model = new()
                 {
                     Name = data.Strings.MakeString(name),
+                    Sprite = ResolveSprite(spritesByName, obj.SpriteName),
+                    TextureMaskId = ResolveSprite(spritesByName, obj.SpriteMaskName),
                     Visible = obj.Visible != 0,
                     Solid = obj.Solid != 0,
                     Persistent = obj.Persistent != 0,
@@ -669,6 +869,7 @@ namespace BridgeLib
 
         private static void CreateRooms(UndertaleData data, string projectDir, GmRoom[] rooms, string gameName,
                                         Dictionary<string, UndertaleGameObject> objectsByName,
+                                        Dictionary<string, UndertaleSprite> spritesByName,
                                         List<(UndertaleCode code, string source)> compileQueue)
         {
             uint nextInstanceId = 100000;
@@ -718,7 +919,7 @@ namespace BridgeLib
                 }
 
                 BuildViews(model, room, objectsByName);
-                BuildLayers(data, model, room, ref nextInstanceId, objectsByName);
+                BuildLayers(data, model, room, ref nextInstanceId, objectsByName, spritesByName);
 
                 data.Rooms.Add(model);
                 data.GeneralInfo.RoomOrder.Add(new UndertaleResourceById<UndertaleRoom, UndertaleChunkROOM>
@@ -762,7 +963,8 @@ namespace BridgeLib
         }
 
         private static void BuildLayers(UndertaleData data, UndertaleRoom model, GmRoom room, ref uint nextInstanceId,
-                                        Dictionary<string, UndertaleGameObject> objectsByName)
+                                        Dictionary<string, UndertaleGameObject> objectsByName,
+                                        Dictionary<string, UndertaleSprite> spritesByName)
         {
             GmRoomLayer[] layers = ReadInlineArray<GmRoomLayer>(room.Layers, room.LayerCount);
             uint layerId = 0;
@@ -820,7 +1022,7 @@ namespace BridgeLib
                         {
                             Visible = background.Visible != 0,
                             Foreground = background.Foreground != 0,
-                            Sprite = null,
+                            Sprite = ResolveSprite(spritesByName, background.SpriteName),
                             TiledHorizontally = background.TiledHorizontally != 0,
                             TiledVertically = background.TiledVertically != 0,
                             Stretch = background.Stretch != 0,

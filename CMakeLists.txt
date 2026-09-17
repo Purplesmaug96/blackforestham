@@ -15,6 +15,7 @@ add_library(libbfh
     src/gm_things/folder.c
     src/gm_things/object.c
     src/gm_things/room.c
+    src/gm_things/sprite.c
 )
 
 target_compile_definitions(libbfh PUBLIC LANG_EN)

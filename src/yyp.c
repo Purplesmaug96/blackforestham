@@ -8,6 +8,7 @@
 #include "gm_things/folder.h"
 #include "gm_things/object.h"
 #include "gm_things/room.h"
+#include "gm_things/sprite.h"
 
 // Newest runtime version the rest of the toolchain (UndertaleModLib writer and
 // the runner) can currently round-trip. IDE versions above this are clamped
@@ -164,6 +165,8 @@ yyp_t* yyp_parse_file(char* file) {
     yyp->room_count = 0;
     yyp->objects = safe_calloc(yyp->resource_count, sizeof(gm_object_t*));
     yyp->object_count = 0;
+    yyp->sprites = safe_calloc(yyp->resource_count, sizeof(gm_sprite_t*));
+    yyp->sprite_count = 0;
 
     for (int i = 0; i < yyp->resource_count; i++) {
         json_object* resource = json_object_array_get_idx(yyp->json.resources.obj, i);
@@ -195,6 +198,8 @@ yyp_t* yyp_parse_file(char* file) {
                         yyp->rooms[yyp->room_count++] = gm_room_parse(resource_obj);
                     } else if (entry->type != nullptr && strcmp(entry->type, "GMObject") == 0) {
                         yyp->objects[yyp->object_count++] = gm_object_parse(resource_obj, entry->path);
+                    } else if (entry->type != nullptr && strcmp(entry->type, "GMSprite") == 0) {
+                        yyp->sprites[yyp->sprite_count++] = gm_sprite_parse(resource_obj, entry->path);
                     }
                     json_object_put(resource_obj);
                 }
@@ -260,10 +265,15 @@ void yyp_free(yyp_t* yyp) {
         gm_object_free(yyp->objects[i]);
     }
 
+    for (int i = 0; i < yyp->sprite_count; i++) {
+        gm_sprite_free(yyp->sprites[i]);
+    }
+
     free(yyp->folders);
     free(yyp->resources);
     free(yyp->rooms);
     free(yyp->objects);
+    free(yyp->sprites);
 
     free(yyp->name);
     free(yyp->display_name);
