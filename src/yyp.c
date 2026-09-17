@@ -9,6 +9,37 @@
 #include "gm_things/object.h"
 #include "gm_things/room.h"
 
+// Newest runtime version the rest of the toolchain (UndertaleModLib writer and
+// the runner) can currently round-trip. IDE versions above this are clamped
+// down so the produced data.win stays parseable.
+#define YYP_MAX_VERSION_MAJOR 2026
+#define YYP_MAX_VERSION_MINOR 0
+
+// MetaData.IDEVersion is "MAJOR.<minor*100>.RELEASE.BUILD" on modern GameMaker
+// releases (e.g. "2026.100.0.1121" is runtime 2026.1, "2024.1400.0.838" is
+// 2024.14), while older projects use a plain "MAJOR.MINOR.RELEASE.BUILD" form.
+// Derive the runtime major/minor from either shape, then clamp to the maximum
+// supported version. Falls back to 2.3 when no usable version is present.
+static void yyp_parse_ide_version(const char* ide_version, int32_t* major, int32_t* minor) {
+    *major = 2;
+    *minor = 3;
+
+    if (ide_version != nullptr) {
+        int32_t parsed_major = 0;
+        int32_t parsed_minor = 0;
+        if (sscanf(ide_version, "%d.%d", &parsed_major, &parsed_minor) == 2) {
+            *major = parsed_major;
+            *minor = parsed_minor >= 100 ? parsed_minor / 100 : parsed_minor;
+        }
+    }
+
+    if (*major > YYP_MAX_VERSION_MAJOR ||
+        (*major == YYP_MAX_VERSION_MAJOR && *minor > YYP_MAX_VERSION_MINOR)) {
+        *major = YYP_MAX_VERSION_MAJOR;
+        *minor = YYP_MAX_VERSION_MINOR;
+    }
+}
+
 static char* dir_of(const char* path) {
     char* dir = strdup(path);
     char* slash = strrchr(dir, '/');
@@ -111,6 +142,11 @@ yyp_t* yyp_parse_file(char* file) {
 
     yyp->name = get_obj_string(get_field(yyp->json.root_obj, "%Name"));
     yyp->display_name = get_obj_string(get_field(yyp->json.root_obj, "displayName"));
+
+    json_object* metadata = get_field(yyp->json.root_obj, "MetaData");
+    char* ide_version = metadata ? get_obj_string(get_field(metadata, "IDEVersion")) : nullptr;
+    yyp_parse_ide_version(ide_version, &yyp->version_major, &yyp->version_minor);
+    free(ide_version);
 
     yyp->json.folders = get_obj_array(get_field(yyp->json.root_obj, "Folders"));
 

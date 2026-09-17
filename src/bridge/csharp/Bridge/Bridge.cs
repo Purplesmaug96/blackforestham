@@ -46,6 +46,8 @@ namespace BridgeLib
         {
             public IntPtr Name;
             public IntPtr DisplayName;
+            public int VersionMajor;
+            public int VersionMinor;
             public IntPtr File;
             public IntPtr Dir;
             public IntPtr Src;
@@ -348,9 +350,15 @@ namespace BridgeLib
                     Config = MakeString("Default"),
                     Name = MakeString(gameName),
                     DisplayName = MakeString(displayName),
-                    Major = 2,
-                    Minor = 3,
-                    Release = 7,
+                    // Runtime version, autodetected in C from the project's
+                    // MetaData.IDEVersion (see yyp_parse_ide_version) and already
+                    // clamped to the newest version the toolchain can round-trip.
+                    // It is not cosmetic: the runner and GameMaker gate behaviour
+                    // such as deferred Animation End and the newer room /
+                    // background / collision-mask layouts on it.
+                    Major = (uint)yyp.VersionMajor,
+                    Minor = (uint)yyp.VersionMinor,
+                    Release = 0,
                     Build = 0,
                     DefaultWindowWidth = 1024,
                     DefaultWindowHeight = 768,
@@ -403,6 +411,8 @@ namespace BridgeLib
 
             // Folders only exist in the project file, not in data.win; resource
             // paths already carry the folder they live in.
+            Report($"project runtime version {yyp.VersionMajor}.{yyp.VersionMinor}");
+
             YypResource[] resources = ReadPointerArray<YypResource>(yyp.Resources, yyp.ResourceCount);
             GmRoom[] rooms = ReadPointerArray<GmRoom>(yyp.Rooms, yyp.RoomCount);
             GmObject[] objects = ReadPointerArray<GmObject>(yyp.Objects, yyp.ObjectCount);

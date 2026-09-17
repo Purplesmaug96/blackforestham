@@ -19,6 +19,11 @@ typedef struct {
 typedef struct yyp {
     char* name;
     char* display_name;
+    // Runtime version derived (in C) from MetaData.IDEVersion (e.g.
+    // "2026.100.0.1121" -> 2026.1). Clamped to the newest version the
+    // toolchain currently supports. The GEN8 chunk is written from these.
+    int32_t version_major;
+    int32_t version_minor;
     char* file;
     // directory containing the .yyp; resource paths are relative to it
     char* dir;
