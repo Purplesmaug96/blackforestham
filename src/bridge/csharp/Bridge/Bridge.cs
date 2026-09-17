@@ -353,9 +353,13 @@ namespace BridgeLib
                     // Runtime version, autodetected in C from the project's
                     // MetaData.IDEVersion (see yyp_parse_ide_version) and already
                     // clamped to the newest version the toolchain can round-trip.
-                    // It is not cosmetic: the runner and GameMaker gate behaviour
-                    // such as deferred Animation End and the newer room /
-                    // background / collision-mask layouts on it.
+                    // Note GameMaker no longer maintains GEN8's version, and
+                    // UndertaleGeneralInfo.Serialize flattens it to 2.0 for all
+                    // GMS2 files, so readers instead infer the real version from
+                    // chunk presence (SEQN => 2.3, UILR => 2024.13, plus probes).
+                    // These fields therefore only steer which format the writer
+                    // emits, and must stay in sync with the chunks registered
+                    // below (e.g. UILR) or the output won't round-trip.
                     Major = (uint)yyp.VersionMajor,
                     Minor = (uint)yyp.VersionMinor,
                     Release = 0,
@@ -377,6 +381,16 @@ namespace BridgeLib
             // read-back path would parse function reference chains in the
             // pre-2.3 format.
             UndertaleChunkSEQN seqn = new();
+
+            // Likewise present but empty: 2024.13 changed the object and room
+            // layouts (dropped Managed later in 2026.1, added the room
+            // InstanceCreationOrderIDs pointer), but GEN8 is flattened to 2.0 on
+            // write, so readers detect 2024.13 by this chunk's presence. Without
+            // it they parse those chunks in the pre-2024.13 shape. Only emitted
+            // when the project targets a version that uses the newer layout.
+            bool usesRoomLayout2024_13 = yyp.VersionMajor > 2024 ||
+                (yyp.VersionMajor == 2024 && yyp.VersionMinor >= 13);
+            UndertaleChunkUILR uilr = usesRoomLayout2024_13 ? new() : null;
 
             // Registered even though they stay empty: UndertaleResourceById only
             // writes a null reference as -1 when its target chunk exists. Without
@@ -403,6 +417,7 @@ namespace BridgeLib
             Register("VARI", vari, typeof(UndertaleChunkVARI));
             Register("FUNC", func, typeof(UndertaleChunkFUNC));
             Register("SEQN", seqn, typeof(UndertaleChunkSEQN));
+            if (uilr != null) Register("UILR", uilr, typeof(UndertaleChunkUILR));
             Register("OBJT", objt, typeof(UndertaleChunkOBJT));
             Register("SPRT", sprt, typeof(UndertaleChunkSPRT));
             Register("BGND", bgnd, typeof(UndertaleChunkBGND));
