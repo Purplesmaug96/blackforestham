@@ -6,6 +6,7 @@
 
 #include "_json_helpers.h"
 #include "gm_things/folder.h"
+#include "gm_things/object.h"
 #include "gm_things/room.h"
 
 static char* dir_of(const char* path) {
@@ -125,6 +126,8 @@ yyp_t* yyp_parse_file(char* file) {
     yyp->resources = safe_calloc(yyp->resource_count, sizeof(yyp_resource_t*));
     yyp->rooms = safe_calloc(yyp->resource_count, sizeof(gm_room_t*));
     yyp->room_count = 0;
+    yyp->objects = safe_calloc(yyp->resource_count, sizeof(gm_object_t*));
+    yyp->object_count = 0;
 
     for (int i = 0; i < yyp->resource_count; i++) {
         json_object* resource = json_object_array_get_idx(yyp->json.resources.obj, i);
@@ -154,6 +157,8 @@ yyp_t* yyp_parse_file(char* file) {
                     entry->type = get_obj_string(get_field(resource_obj, "resourceType"));
                     if (entry->type != nullptr && strcmp(entry->type, "GMRoom") == 0) {
                         yyp->rooms[yyp->room_count++] = gm_room_parse(resource_obj);
+                    } else if (entry->type != nullptr && strcmp(entry->type, "GMObject") == 0) {
+                        yyp->objects[yyp->object_count++] = gm_object_parse(resource_obj, entry->path);
                     }
                     json_object_put(resource_obj);
                 }
@@ -215,9 +220,14 @@ void yyp_free(yyp_t* yyp) {
         gm_room_free(yyp->rooms[i]);
     }
 
+    for (int i = 0; i < yyp->object_count; i++) {
+        gm_object_free(yyp->objects[i]);
+    }
+
     free(yyp->folders);
     free(yyp->resources);
     free(yyp->rooms);
+    free(yyp->objects);
 
     free(yyp->name);
     free(yyp->display_name);

@@ -13,6 +13,7 @@ add_compile_options(-Wall -Wextra -Werror)
 add_library(libbfh
     src/yyp.c
     src/gm_things/folder.c
+    src/gm_things/object.c
     src/gm_things/room.c
 )
 

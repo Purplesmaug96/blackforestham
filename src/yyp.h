@@ -6,6 +6,7 @@
 
 #include "_json_helpers.h"
 #include "gm_things/folder.h"
+#include "gm_things/object.h"
 #include "gm_things/room.h"
 
 typedef struct {
@@ -32,6 +33,8 @@ typedef struct yyp {
     yyp_resource_t** resources;
     int32_t room_count;
     gm_room_t** rooms;
+    int32_t object_count;
+    gm_object_t** objects;
 } yyp_t;
 
 yyp_t* yyp_parse_file(char* file);

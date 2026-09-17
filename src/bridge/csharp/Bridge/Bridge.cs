@@ -55,6 +55,8 @@ namespace BridgeLib
             public IntPtr Resources;       // yyp_resource_t**
             public int RoomCount;
             public IntPtr Rooms;           // gm_room_t**
+            public int ObjectCount;
+            public IntPtr Objects;         // gm_object_t**
         }
 
         // Mirror of yyp_resource_t in src/yyp.h.
@@ -182,6 +184,53 @@ namespace BridgeLib
             public IntPtr Layers;          // gm_room_layer_t*
         }
 
+        // Mirror of gm_object_vertex_t in src/gm_things/object.h.
+        [StructLayout(LayoutKind.Sequential)]
+        private struct GmObjectVertex
+        {
+            public float X;
+            public float Y;
+        }
+
+        // Mirror of gm_object_event_t in src/gm_things/object.h.
+        [StructLayout(LayoutKind.Sequential)]
+        private struct GmObjectEvent
+        {
+            public int Type;
+            public int Num;
+            public IntPtr Collision;
+            public IntPtr File;
+        }
+
+        // Mirror of gm_object_t in src/gm_things/object.h.
+        [StructLayout(LayoutKind.Sequential)]
+        private struct GmObject
+        {
+            public IntPtr Name;
+            public IntPtr SpriteName;
+            public IntPtr SpriteMaskName;
+            public IntPtr ParentName;
+            public int Visible;
+            public int Solid;
+            public int Persistent;
+            public int Depth;
+            public int UsesPhysics;
+            public int IsSensor;
+            public int CollisionShape;
+            public float Density;
+            public float Restitution;
+            public float LinearDamping;
+            public float AngularDamping;
+            public float Friction;
+            public uint Group;
+            public int Awake;
+            public int Kinematic;
+            public int VertexCount;
+            public IntPtr Vertices;        // gm_object_vertex_t*
+            public int EventCount;
+            public IntPtr Events;          // gm_object_event_t*
+        }
+
         /// <summary>
         /// Native entry point hosted by the C bridge via hostfxr.
         ///
@@ -267,6 +316,12 @@ namespace BridgeLib
             return result;
         }
 
+        private static UndertaleGameObject? ResolveObject(Dictionary<string, UndertaleGameObject> objectsByName, IntPtr namePtr)
+        {
+            string name = PtrToString(namePtr);
+            return name.Length != 0 && objectsByName.TryGetValue(name, out UndertaleGameObject? model) ? model : null;
+        }
+
         private static UndertaleData BuildData(Yyp yyp, string projectDir)
         {
             // %Name wins over displayName when both are present, mirroring GameMaker.
@@ -350,13 +405,20 @@ namespace BridgeLib
             // paths already carry the folder they live in.
             YypResource[] resources = ReadPointerArray<YypResource>(yyp.Resources, yyp.ResourceCount);
             GmRoom[] rooms = ReadPointerArray<GmRoom>(yyp.Rooms, yyp.RoomCount);
+            GmObject[] objects = ReadPointerArray<GmObject>(yyp.Objects, yyp.ObjectCount);
 
-            // Code compiled from scripts and room creation codes is queued together
-            // so the global function cache sees every entry before linking.
+            // Code compiled from scripts, objects and room creation codes is queued
+            // together so the global function cache sees every entry before linking.
             var compileQueue = new List<(UndertaleCode code, string source)>();
 
             CreateScripts(data, projectDir, resources, compileQueue);
-            CreateRooms(data, projectDir, rooms, gameName, compileQueue);
+
+            // Objects must exist in the OBJT chunk before rooms (instances/view
+            // targets) and before compiling, so GML references like `obj_foo`
+            // resolve to their object index.
+            Dictionary<string, UndertaleGameObject> objectsByName = CreateObjects(data, projectDir, objects, compileQueue);
+
+            CreateRooms(data, projectDir, rooms, gameName, objectsByName, compileQueue);
             CompileQueued(data, compileQueue);
 
             return data;
@@ -393,8 +455,13 @@ namespace BridgeLib
             // local variable table while linking.
             foreach ((string name, string source) in scripts)
             {
-                string codeName = "gml_Script_" + name;
-                UndertaleCode codeEntry = CreateCode(data, codeName, out int codeNameId);
+                // In GMS 2.3+ a script asset's code entry is named
+                // gml_GlobalScript_<name> and registered as a global init script
+                // (run once at game start). The naming is also what makes the
+                // compiler treat the entry as a global script and register the
+                // functions it declares as project-wide global functions.
+                string codeName = "gml_GlobalScript_" + name;
+                UndertaleCode codeEntry = CreateCode(data, codeName, out _);
 
                 data.Scripts.Add(new UndertaleScript
                 {
@@ -402,17 +469,181 @@ namespace BridgeLib
                     Code = codeEntry
                 });
 
+                data.GlobalInitScripts.Add(new UndertaleGlobalInit
+                {
+                    Code = codeEntry
+                });
+
                 data.Functions.Add(new UndertaleFunction
                 {
-                    Name = codeEntry.Name,
-                    NameStringID = codeNameId
+                    Name = data.Strings.MakeString("gml_Script_" + name, out int functionNameId),
+                    NameStringID = functionNameId
                 });
 
                 compileQueue.Add((codeEntry, source));
             }
         }
 
+        private static Dictionary<string, UndertaleGameObject> CreateObjects(UndertaleData data, string projectDir, GmObject[] objects,
+                                                                            List<(UndertaleCode code, string source)> compileQueue)
+        {
+            // Object references (parents, collision targets) are by name, so all
+            // models are created first and wired in a second pass. The chunk index
+            // is assigned here; collision events serialize it as their subtype.
+            var byName = new Dictionary<string, UndertaleGameObject>(StringComparer.Ordinal);
+            var idByName = new Dictionary<string, uint>(StringComparer.Ordinal);
+
+            foreach (GmObject obj in objects)
+            {
+                string name = PtrToString(obj.Name);
+                UndertaleGameObject model = new()
+                {
+                    Name = data.Strings.MakeString(name),
+                    Visible = obj.Visible != 0,
+                    Solid = obj.Solid != 0,
+                    Persistent = obj.Persistent != 0,
+                    Depth = obj.Depth,
+                    UsesPhysics = obj.UsesPhysics != 0,
+                    IsSensor = obj.IsSensor != 0,
+                    CollisionShape = (CollisionShapeFlags)obj.CollisionShape,
+                    Density = obj.Density,
+                    Restitution = obj.Restitution,
+                    Group = obj.Group,
+                    LinearDamping = obj.LinearDamping,
+                    AngularDamping = obj.AngularDamping,
+                    Friction = obj.Friction,
+                    Awake = obj.Awake != 0,
+                    Kinematic = obj.Kinematic != 0,
+                };
+
+                GmObjectVertex[] vertices = ReadInlineArray<GmObjectVertex>(obj.Vertices, obj.VertexCount);
+                foreach (GmObjectVertex vertex in vertices)
+                {
+                    model.PhysicsVertices.Add(new UndertaleGameObject.UndertalePhysicsVertex
+                    {
+                        X = vertex.X,
+                        Y = vertex.Y,
+                    });
+                }
+
+                if (name.Length != 0)
+                {
+                    idByName[name] = (uint)data.GameObjects.Count;
+                    byName[name] = model;
+                }
+                data.GameObjects.Add(model);
+            }
+
+            int eventCount = 0;
+            foreach (GmObject obj in objects)
+            {
+                string name = PtrToString(obj.Name);
+                if (!byName.TryGetValue(name, out UndertaleGameObject? model))
+                    continue;
+
+                string parentName = PtrToString(obj.ParentName);
+                if (parentName.Length != 0)
+                {
+                    if (byName.TryGetValue(parentName, out UndertaleGameObject? parent))
+                        model.ParentId = parent;
+                    else
+                        Report($"warning: object {name} parent {parentName} not found");
+                }
+
+                GmObjectEvent[] events = ReadInlineArray<GmObjectEvent>(obj.Events, obj.EventCount);
+                foreach (GmObjectEvent ev in events)
+                {
+                    if (ev.Type < 0 || ev.Type >= UndertaleGameObject.EventTypeCount)
+                    {
+                        Report($"warning: object {name} has event with out-of-range type {ev.Type}");
+                        continue;
+                    }
+
+                    uint subtype;
+                    if (ev.Type == (int)EventType.Collision)
+                    {
+                        string collisionName = PtrToString(ev.Collision);
+                        if (!idByName.TryGetValue(collisionName, out subtype))
+                        {
+                            Report($"warning: object {name} collision event targets unknown object {collisionName}");
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        subtype = (uint)ev.Num;
+                    }
+
+                    string file = PtrToString(ev.File);
+                    string gmlPath = Path.Combine(projectDir, file.Replace('/', Path.DirectorySeparatorChar));
+                    if (!File.Exists(gmlPath))
+                    {
+                        Report($"warning: object {name} event {Path.GetFileName(file)} does not exist ({gmlPath})");
+                        continue;
+                    }
+
+                    // Subtype 0 is shared by every single-subtype event type, so
+                    // uniqueness is checked within the type's sublist.
+                    bool duplicate = false;
+                    foreach (UndertaleGameObject.Event existing in model.Events[ev.Type])
+                    {
+                        if (existing.EventSubtype == subtype)
+                        {
+                            duplicate = true;
+                            break;
+                        }
+                    }
+                    if (duplicate)
+                    {
+                        Report($"warning: object {name} has duplicate event type {ev.Type} subtype {subtype}");
+                        continue;
+                    }
+
+                    string codeName = "gml_Object_" + name + "_" +
+                                      Path.GetFileNameWithoutExtension(file);
+                    UndertaleCode codeEntry = CreateCode(data, codeName, out _);
+
+                    UndertaleGameObject.Event gameEvent = new()
+                    {
+                        EventSubtype = subtype,
+                    };
+                    gameEvent.Actions.Add(CreateEventAction(data, codeEntry));
+                    model.Events[ev.Type].Add(gameEvent);
+
+                    compileQueue.Add((codeEntry, File.ReadAllText(gmlPath)));
+                    eventCount++;
+                }
+            }
+
+            Report($"{objects.Length} object(s), {eventCount} event code(s) found");
+            return byName;
+        }
+
+        // The action wrapper GameMaker emits for a normal GML event; the values
+        // are fixed and only CodeId varies.
+        private static UndertaleGameObject.EventAction CreateEventAction(UndertaleData data, UndertaleCode codeEntry)
+        {
+            return new UndertaleGameObject.EventAction
+            {
+                LibID = 1,
+                ID = 603,
+                Kind = 7,
+                UseRelative = false,
+                IsQuestion = false,
+                UseApplyTo = true,
+                ExeType = 2,
+                ActionName = data.Strings.MakeString(""),
+                CodeId = codeEntry,
+                ArgumentCount = 1,
+                Who = -1,
+                Relative = false,
+                IsNot = false,
+                UnknownAlwaysZero = 0,
+            };
+        }
+
         private static void CreateRooms(UndertaleData data, string projectDir, GmRoom[] rooms, string gameName,
+                                        Dictionary<string, UndertaleGameObject> objectsByName,
                                         List<(UndertaleCode code, string source)> compileQueue)
         {
             uint nextInstanceId = 100000;
@@ -461,8 +692,8 @@ namespace BridgeLib
                     }
                 }
 
-                BuildViews(model, room);
-                BuildLayers(data, model, room, ref nextInstanceId);
+                BuildViews(model, room, objectsByName);
+                BuildLayers(data, model, room, ref nextInstanceId, objectsByName);
 
                 data.Rooms.Add(model);
                 data.GeneralInfo.RoomOrder.Add(new UndertaleResourceById<UndertaleRoom, UndertaleChunkROOM>
@@ -474,7 +705,7 @@ namespace BridgeLib
             Report($"{rooms.Length} room(s), {creationCodeCount} room creation code(s) found");
         }
 
-        private static void BuildViews(UndertaleRoom model, GmRoom room)
+        private static void BuildViews(UndertaleRoom model, GmRoom room, Dictionary<string, UndertaleGameObject> objectsByName)
         {
             GmRoomView[] views = ReadInlineArray<GmRoomView>(room.Views, room.ViewCount);
             if (views.Length == 0)
@@ -500,12 +731,13 @@ namespace BridgeLib
                     BorderY = (uint)view.BorderY,
                     SpeedX = view.SpeedX,
                     SpeedY = view.SpeedY,
-                    ObjectId = null,
+                    ObjectId = ResolveObject(objectsByName, view.ObjectName),
                 });
             }
         }
 
-        private static void BuildLayers(UndertaleData data, UndertaleRoom model, GmRoom room, ref uint nextInstanceId)
+        private static void BuildLayers(UndertaleData data, UndertaleRoom model, GmRoom room, ref uint nextInstanceId,
+                                        Dictionary<string, UndertaleGameObject> objectsByName)
         {
             GmRoomLayer[] layers = ReadInlineArray<GmRoomLayer>(room.Layers, room.LayerCount);
             uint layerId = 0;
@@ -537,7 +769,7 @@ namespace BridgeLib
                             {
                                 X = (int)MathF.Round(instance.X),
                                 Y = (int)MathF.Round(instance.Y),
-                                ObjectDefinition = null,
+                                ObjectDefinition = ResolveObject(objectsByName, instance.ObjectName),
                                 InstanceID = nextInstanceId++,
                                 ScaleX = instance.ScaleX,
                                 ScaleY = instance.ScaleY,
