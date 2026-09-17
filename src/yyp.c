@@ -80,7 +80,7 @@ void yyp_dump(yyp_t* yyp, FILE* stream) {
     fprintf(stream, "Folders: \n");
     // TODO: Put this in something like gm_folder_dump
     for (int i = 0; i < yyp->json.folders.len; i++) {
-        fprintf(stream, "[ Name: \"%s\", Path: \"%s\"]", yyp->folders[i]->name, yyp->folders[i]->path);
+        fprintf(stream, "[ Name: \"%s\", Path: \"%s\" ]", yyp->folders[i]->name, yyp->folders[i]->path);
         if (i < yyp->json.folders.len - 1) {
             fprintf(stream, ",");
         }
@@ -89,7 +89,7 @@ void yyp_dump(yyp_t* yyp, FILE* stream) {
 
     fprintf(stream, "Resources: \n");
     for (int i = 0; i < yyp->resource_count; i++) {
-        fprintf(stream, "[ Name: \"%s\", Path: \"%s\"]", yyp->resources[i]->name, yyp->resources[i]->path);
+        fprintf(stream, "[ Name: \"%s\", Path: \"%s\" ]", yyp->resources[i]->name, yyp->resources[i]->path);
         if (i < yyp->resource_count - 1) {
             fprintf(stream, ",");
         }
