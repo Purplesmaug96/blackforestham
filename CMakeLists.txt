@@ -26,43 +26,43 @@ target_link_libraries(libbfh PRIVATE json-c)
 set_target_properties(libbfh PROPERTIES OUTPUT_NAME "bfh")
 
 # Bridge from C to C#, exists because UndertaleModTool/UndertaleModLib
-option(BFH_ENABLE_DOTNET_BRIDGE "Enable the C<->C# bridge (requires the .NET SDK, .NET 10+ for UndertaleModLib)" ON)
-set(BFH_BRIDGE_OUTPUT_DIR "${CMAKE_BINARY_DIR}/bridge")
+option(ENABLE_DOTNET_BRIDGE "Enable the C<->C# bridge (requires the .NET SDK, .NET 10+ for UndertaleModLib)" ON)
+set(BRIDGE_OUTPUT_DIR "${CMAKE_BINARY_DIR}/bridge")
 
-if(BFH_ENABLE_DOTNET_BRIDGE)
+if(ENABLE_DOTNET_BRIDGE)
     find_program(DOTNET_EXECUTABLE dotnet)
 
     if(NOT DOTNET_EXECUTABLE)
-        message(WARNING "dotnet not found - building without the bridge (set -DBFH_ENABLE_DOTNET_BRIDGE=OFF to silence)")
+        message(WARNING "dotnet not found - building without the bridge (set -DENABLE_DOTNET_BRIDGE=OFF to silence)")
     endif()
 endif()
 
-if(BFH_ENABLE_DOTNET_BRIDGE AND DOTNET_EXECUTABLE)
+if(ENABLE_DOTNET_BRIDGE AND DOTNET_EXECUTABLE)
     add_custom_target(bridge_publish ALL
         COMMAND ${DOTNET_EXECUTABLE} publish
-                ${CMAKE_CURRENT_SOURCE_DIR}/src/bridge/csharp/BfhBridge/BfhBridge.csproj
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/bridge/csharp/Bridge/Bridge.csproj
                 -c Release
-                -o ${BFH_BRIDGE_OUTPUT_DIR}
+                -o ${BRIDGE_OUTPUT_DIR}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        COMMENT "Publishing the managed BfhBridge (UndertaleModLib backend) to ${BFH_BRIDGE_OUTPUT_DIR}"
+        COMMENT "Publishing the managed Bridge (UndertaleModLib backend) to ${BRIDGE_OUTPUT_DIR}"
         VERBATIM
     )
 
-    add_library(bfh_bridge
-        src/bridge/bfh_bridge.c
-        src/bridge/bfh_dotnet.c
-        src/bridge/bfh_bridge_yyp.c
+    add_library(bridge
+        src/bridge/bridge.c
+        src/bridge/dotnet.c
+        src/bridge/bridge_yyp.c
     )
 
-    target_include_directories(bfh_bridge PUBLIC src)
-    target_link_libraries(bfh_bridge PRIVATE libbfh json-c)
+    target_include_directories(bridge PUBLIC src)
+    target_link_libraries(bridge PRIVATE libbfh json-c)
     target_compile_definitions(
-        bfh_bridge PRIVATE
-        "BFH_BRIDGE_DEFAULT_DIR=\"${BFH_BRIDGE_OUTPUT_DIR}\""
+        bridge PRIVATE
+        "BRIDGE_DEFAULT_DIR=\"${BRIDGE_OUTPUT_DIR}\""
     )
-    set_target_properties(bfh_bridge PROPERTIES OUTPUT_NAME "bfh_bridge")
+    set_target_properties(bridge PROPERTIES OUTPUT_NAME "bridge")
 
-    add_dependencies(bfh_bridge bridge_publish)
+    add_dependencies(bridge bridge_publish)
 endif()
 
 add_executable(bfh
@@ -72,6 +72,6 @@ add_executable(bfh
 
 target_link_libraries(bfh PRIVATE libbfh)
 
-if(TARGET bfh_bridge)
-    target_link_libraries(bfh PRIVATE bfh_bridge)
+if(TARGET bridge)
+    target_link_libraries(bfh PRIVATE bridge)
 endif()

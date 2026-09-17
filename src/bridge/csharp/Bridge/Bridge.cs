@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Text.Json;
 
 using UndertaleModLib;
@@ -10,44 +9,60 @@ using UndertaleModLib.Compiler;
 using UndertaleModLib.Decompiler;
 using UndertaleModLib.Models;
 
-// Native data contract (mirrored in src/bridge/bfh_bridge.h)
-namespace BfhBridgeLib
+// Native data contract (mirrored in src/bridge/bridge.h)
+namespace BridgeLib
 {
-    public static class BfhBridge
+    public static class Bridge
     {
-        public const string EntryPoint = "Bfh_Compile";
+        public const string EntryPoint = "Compile";
 
-        // Status codes, kept in sync with bfh_bridge_status_t in bfh_bridge.h
+        // Status codes, kept in sync with bridge_status_t in bridge.h
         public const int StatusOk = 0;
         public const int StatusInvalidArgs = 1;
         public const int StatusInvalidProject = 2;
         public const int StatusWriteFailed = 3;
 
+        // Managed mirror of bridge_yyp_t in bridge.h: the parsed project, flattened
+        // by the C side into a single marshallable struct. Only pointers and counts
+        // cross the bridge; no project JSON is ever parsed here.
+        [StructLayout(LayoutKind.Sequential)]
+        private unsafe struct BridgeYyp
+        {
+            public IntPtr Name;
+            public IntPtr DisplayName;
+            public int FolderCount;
+            public IntPtr FolderNames;
+            public int ResourceCount;
+            public IntPtr ResourceNames;
+            public IntPtr ResourcePaths;
+        }
+
         /// <summary>
         /// Native entry point hosted by the C bridge via hostfxr.
         ///
-        /// <paramref name="yypJsonPtr"/> points at the raw, UTF-8, NUL-terminated
-        /// contents of a .yyp project file. <paramref name="projectDirPtr"/> points
-        /// at the NUL-terminated UTF-8 directory that contains the project
-        /// (used to resolve resource files such as .gml scripts).
-        /// <paramref name="outputPathPtr"/> points at the NUL-terminated UTF-8
-        /// destination path for the produced data.win. All buffers are owned by
-        /// the C caller.
+        /// <paramref name="yypPtr"/> points at a <see cref="BridgeYyp"/>: the
+        /// flattened contents of a parsed <c>.yyp</c> project (name, folders,
+        /// resources).
+        /// <paramref name="projectDirPtr"/> points at the NUL-terminated UTF-8
+        /// directory that contains the project (used to resolve resource files such
+        /// as .gml scripts). <paramref name="outputPathPtr"/> points at the
+        /// NUL-terminated UTF-8 destination path for the produced data.win. All
+        /// buffers are owned by the C caller and valid for the duration of the call.
         /// </summary>
         [UnmanagedCallersOnly(EntryPoint = EntryPoint)]
-        public static unsafe int Bfh_Compile(IntPtr yypJsonPtr, IntPtr projectDirPtr, IntPtr outputPathPtr)
+        public static unsafe int Compile(IntPtr yypPtr, IntPtr projectDirPtr, IntPtr outputPathPtr)
         {
             try
             {
-                if (yypJsonPtr == IntPtr.Zero || projectDirPtr == IntPtr.Zero || outputPathPtr == IntPtr.Zero)
+                if (yypPtr == IntPtr.Zero || projectDirPtr == IntPtr.Zero || outputPathPtr == IntPtr.Zero)
                     return StatusInvalidArgs;
 
-                string yypJson = Marshal.PtrToStringUTF8(yypJsonPtr) ?? throw new ArgumentNullException(nameof(yypJsonPtr));
+                BridgeYyp yyp = Marshal.PtrToStructure<BridgeYyp>(yypPtr);
                 string projectDir = Marshal.PtrToStringUTF8(projectDirPtr) ?? throw new ArgumentNullException(nameof(projectDirPtr));
                 string outputPath = Marshal.PtrToStringUTF8(outputPathPtr) ?? throw new ArgumentNullException(nameof(outputPathPtr));
 
                 using var stream = new FileStream(outputPath, FileMode.Create, FileAccess.Write);
-                using UndertaleData data = BuildData(yypJson, projectDir);
+                using UndertaleData data = BuildData(yyp, projectDir);
 
                 UndertaleIO.Write(stream, data);
 
@@ -56,7 +71,7 @@ namespace BfhBridgeLib
             }
             catch (JsonException ex)
             {
-                Report($"failed to parse project: {ex.Message}");
+                Report($"failed to parse project resource: {ex.Message}");
                 return StatusInvalidProject;
             }
             catch (Exception ex)
@@ -66,16 +81,27 @@ namespace BfhBridgeLib
             }
         }
 
-        private static UndertaleData BuildData(string yypJson, string projectDir)
-        {
-            using JsonDocument doc = JsonDocument.Parse(yypJson, new JsonDocumentOptions
-            {
-                AllowTrailingCommas = true
-            });
-            JsonElement root = doc.RootElement;
+        private static string PtrToString(IntPtr ptr)
+            => ptr == IntPtr.Zero ? string.Empty : Marshal.PtrToStringUTF8(ptr) ?? string.Empty;
 
-            string gameName = ReadString(root, "%Name");
-            string displayName = string.IsNullOrEmpty(gameName) ? ReadString(root, "displayName") : gameName;
+        private static string[] ReadStringArray(IntPtr arrayPtr, int count)
+        {
+            if (count <= 0 || arrayPtr == IntPtr.Zero)
+                return Array.Empty<string>();
+
+            string[] result = new string[count];
+            for (int i = 0; i < count; i++)
+            {
+                result[i] = PtrToString(Marshal.ReadIntPtr(arrayPtr, i * IntPtr.Size));
+            }
+            return result;
+        }
+
+        private static UndertaleData BuildData(BridgeYyp yyp, string projectDir)
+        {
+            // %Name wins over displayName when both are present, mirroring GameMaker.
+            string gameName = PtrToString(yyp.Name);
+            string displayName = string.IsNullOrEmpty(gameName) ? PtrToString(yyp.DisplayName) : gameName;
 
             // The string table must exist before anything else: entities reference
             // UndertaleString entries through it throughout construction.
@@ -141,40 +167,35 @@ namespace BfhBridgeLib
 
             // Folders only exist in the project file, not in data.win; log them so
             // the C side can verify the folder tree made it across the bridge.
-            if (root.TryGetProperty("Folders", out JsonElement folders) && folders.ValueKind == JsonValueKind.Array)
+            string[] folders = ReadStringArray(yyp.FolderNames, yyp.FolderCount);
+            if (folders.Length > 0)
             {
-                StringBuilder folderNames = new();
-                foreach (JsonElement folder in folders.EnumerateArray())
-                {
-                    if (folderNames.Length > 0)
-                        folderNames.Append(", ");
-                    folderNames.Append(ReadString(folder, "%Name"));
-                }
-                Report($"{folders.GetArrayLength()} folder(s): {folderNames}");
+                Report($"{folders.Length} folder(s): {string.Join(", ", folders)}");
             }
 
-            CompileScripts(data, projectDir, root);
+            string[] resourceNames = ReadStringArray(yyp.ResourceNames, yyp.ResourceCount);
+            string[] resourcePaths = ReadStringArray(yyp.ResourcePaths, yyp.ResourceCount);
+            if (resourceNames.Length != resourcePaths.Length)
+            {
+                Report("warning: resource name/path arrays are misaligned across the bridge");
+            }
+            var resources = new List<(string name, string path)>(resourceNames.Length);
+            for (int i = 0; i < resourceNames.Length; i++)
+            {
+                resources.Add((resourceNames[i], i < resourcePaths.Length ? resourcePaths[i] : string.Empty));
+            }
+
+            CompileScripts(data, projectDir, resources);
 
             return data;
         }
 
-        private static void CompileScripts(UndertaleData data, string projectDir, JsonElement root)
+        private static void CompileScripts(UndertaleData data, string projectDir, IReadOnlyList<(string name, string path)> resources)
         {
-            if (!root.TryGetProperty("resources", out JsonElement resources) || resources.ValueKind != JsonValueKind.Array)
-            {
-                Report("no resources array in project; nothing to compile");
-                return;
-            }
-
             // Every GMScript resource is recorded by name and .gml source path.
             var scripts = new List<(string name, string source)>();
-            foreach (JsonElement entry in resources.EnumerateArray())
+            foreach ((string name, string path) in resources)
             {
-                if (!entry.TryGetProperty("id", out JsonElement id))
-                    continue;
-
-                string name = ReadString(id, "name");
-                string path = ReadString(id, "path");
                 if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(path))
                     continue;
 
@@ -270,16 +291,9 @@ namespace BfhBridgeLib
             Report($"compiled {scripts.Count} script(s)");
         }
 
-        private static string ReadString(JsonElement obj, string property)
-        {
-            if (obj.TryGetProperty(property, out JsonElement el) && el.ValueKind == JsonValueKind.String)
-                return el.GetString() ?? string.Empty;
-            return string.Empty;
-        }
-
         private static void Report(string message)
         {
-            Console.Error.WriteLine("BfhBridge: " + message);
+            Console.Error.WriteLine("Bridge: " + message);
         }
     }
 }

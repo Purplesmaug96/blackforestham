@@ -18,7 +18,7 @@ static inline json_object* get_field(json_object* obj, char* name) {
 }
 
 static inline char* get_obj_string(json_object* obj) {
-    return strdup(json_object_get_string(obj));
+    return obj ? strdup(json_object_get_string(obj)) : nullptr;
 }
 
 static inline _json_array get_obj_array(json_object* obj) {

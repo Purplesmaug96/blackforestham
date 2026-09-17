@@ -1,4 +1,4 @@
-#include "bfh_dotnet.h"
+#include "dotnet.h"
 
 #include <dirent.h>
 #include <dlfcn.h>
@@ -24,7 +24,7 @@ typedef int32_t (*get_function_pointer_fn)(const char*, const char*, const char*
 
 static void* g_hostfxr_lib = nullptr;
 static hostfxr_handle g_hostfxr_ctx = nullptr;
-static bfh_compile_fn g_compile = nullptr;
+static compile_fn g_compile = nullptr;
 static char g_last_error[1024] = "";
 
 static void set_error(const char* fmt, ...) {
@@ -178,7 +178,7 @@ static void dotnet_root_from_hostfxr(const char* hostfxr_path, char* out, size_t
     snprintf(out, out_size, "%.*s", (int)(end - hostfxr_path), hostfxr_path);
 }
 
-int bfh_dotnet_init(const char* bridge_dir, char* errbuf, size_t errbuf_size) {
+int dotnet_init(const char* bridge_dir, char* errbuf, size_t errbuf_size) {
     char hostfxr_path[PATH_MAX];
     if (find_libhostfxr(hostfxr_path, sizeof(hostfxr_path)) != 0) {
         goto fail;
@@ -203,7 +203,7 @@ int bfh_dotnet_init(const char* bridge_dir, char* errbuf, size_t errbuf_size) {
     }
 
     char runtimeconfig[PATH_MAX];
-    snprintf(runtimeconfig, sizeof(runtimeconfig), "%s/BfhBridge.runtimeconfig.json", bridge_dir);
+    snprintf(runtimeconfig, sizeof(runtimeconfig), "%s/Bridge.runtimeconfig.json", bridge_dir);
     if (access(runtimeconfig, R_OK) != 0) {
         set_error("bridge is not published: %s does not exist", runtimeconfig);
         goto fail;
@@ -213,7 +213,7 @@ int bfh_dotnet_init(const char* bridge_dir, char* errbuf, size_t errbuf_size) {
     dotnet_root_from_hostfxr(hostfxr_path, dotnet_root, sizeof(dotnet_root));
 
     char assembly_path[PATH_MAX];
-    snprintf(assembly_path, sizeof(assembly_path), "%s/BfhBridge.dll", bridge_dir);
+    snprintf(assembly_path, sizeof(assembly_path), "%s/Bridge.dll", bridge_dir);
 
     hostfxr_initialize_parameters init_params;
     init_params.size = sizeof(init_params);
@@ -227,7 +227,7 @@ int bfh_dotnet_init(const char* bridge_dir, char* errbuf, size_t errbuf_size) {
     }
 
     get_function_pointer_fn get_function_pointer_fn_ptr = nullptr;
-    result = get_runtime_delegate(g_hostfxr_ctx, BFH_HDT_LOAD_ASSEMBLY_AND_GET_FUNCTION_POINTER, (void**)&get_function_pointer_fn_ptr);
+    result = get_runtime_delegate(g_hostfxr_ctx, DOTNET_HDT_LOAD_ASSEMBLY_AND_GET_FUNCTION_POINTER, (void**)&get_function_pointer_fn_ptr);
     if (result != 0 || get_function_pointer_fn_ptr == nullptr) {
         set_error("hostfxr_get_runtime_delegate(hdt_load_assembly_and_get_function_pointer) failed with 0x%X", result);
         goto fail;
@@ -236,13 +236,13 @@ int bfh_dotnet_init(const char* bridge_dir, char* errbuf, size_t errbuf_size) {
     void* entry_point = nullptr;
     result = get_function_pointer_fn_ptr(
         assembly_path,
-        "BfhBridgeLib.BfhBridge, BfhBridge",
-        "Bfh_Compile",
-        BFH_UNMANAGEDCALLERSONLY_METHOD,
+        "BridgeLib.Bridge, Bridge",
+        "Compile",
+        DOTNET_UNMANAGEDCALLERSONLY_METHOD,
         nullptr,
         &entry_point);
     if (result != 0 || entry_point == nullptr) {
-        set_error("load_assembly_and_get_function_pointer(BfhBridgeLib.BfhBridge::Bfh_Compile) failed with 0x%X", result);
+        set_error("load_assembly_and_get_function_pointer(BridgeLib.Bridge::Compile) failed with 0x%X", result);
         goto fail;
     }
 
@@ -257,23 +257,23 @@ fail:
     if (errbuf != nullptr && errbuf_size > 0) {
         snprintf(errbuf, errbuf_size, "%s", g_last_error[0] != '\0' ? g_last_error : "unknown host error");
     }
-    bfh_dotnet_shutdown();
+    dotnet_shutdown();
     return -1;
 }
 
-const char* bfh_dotnet_last_error(void) {
+const char* dotnet_last_error(void) {
     return g_last_error;
 }
 
-int32_t bfh_dotnet_invoke(const char* yyp_json, const char* project_dir, const char* output_path) {
+int32_t dotnet_invoke(const struct bridge_yyp* yyp, const char* project_dir, const char* output_path) {
     if (g_compile == nullptr) {
-        set_error("managed entry point is not resolved; call bfh_bridge_init() first");
+        set_error("managed entry point is not resolved; call bridge_init() first");
         return -1;
     }
-    return g_compile(yyp_json, project_dir, output_path);
+    return g_compile(yyp, project_dir, output_path);
 }
 
-void bfh_dotnet_shutdown(void) {
+void dotnet_shutdown(void) {
     if (g_hostfxr_ctx != nullptr) {
         hostfxr_close_fn close_fxr = nullptr;
         if (g_hostfxr_lib != nullptr) {

@@ -4,8 +4,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <OutputType>Library</OutputType>
-    <AssemblyName>BfhBridge</AssemblyName>
-    <RootNamespace>BfhBridgeLib</RootNamespace>
+    <AssemblyName>Bridge</AssemblyName>
+    <RootNamespace>BridgeLib</RootNamespace>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
