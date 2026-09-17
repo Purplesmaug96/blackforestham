@@ -476,6 +476,12 @@ namespace BridgeLib
             }
 
             Register("GEN8", gen8, typeof(UndertaleChunkGEN8));
+            // SPRT/BGND must precede TPAG: the runtime resolves each sprite's
+            // per-frame texture pointers while parsing TPAG, so if TPAG is read
+            // first the sprite list is still empty and the pointers are left as
+            // raw file offsets. This mirrors the canonical GameMaker chunk order.
+            Register("SPRT", sprt, typeof(UndertaleChunkSPRT));
+            Register("BGND", bgnd, typeof(UndertaleChunkBGND));
             Register("GLOB", glob, typeof(UndertaleChunkGLOB));
             Register("SCPT", scpt, typeof(UndertaleChunkSCPT));
             Register("CODE", code, typeof(UndertaleChunkCODE));
@@ -486,8 +492,6 @@ namespace BridgeLib
             Register("TXTR", txtr, typeof(UndertaleChunkTXTR));
             Register("TPAG", tpag, typeof(UndertaleChunkTPAG));
             Register("OBJT", objt, typeof(UndertaleChunkOBJT));
-            Register("SPRT", sprt, typeof(UndertaleChunkSPRT));
-            Register("BGND", bgnd, typeof(UndertaleChunkBGND));
             Register("ROOM", room, typeof(UndertaleChunkROOM));
             Register("STRG", strg, typeof(UndertaleChunkSTRG));
 
@@ -927,6 +931,16 @@ namespace BridgeLib
                     Resource = model
                 });
             }
+
+            // Room instance IDs are assigned sequentially from 100000 across all
+            // rooms (matching GameMaker). The runtime derives its next
+            // runtime-created instance ID from GEN8's LastObj+1, so LastObj must
+            // be at least the largest room instance ID; otherwise instance_create
+            // in an early room reuses an ID that a later room's own instances
+            // use. When that later room loads, the room instance is mistaken for
+            // a persistent carry-over (instancesById still holds the stale entry)
+            // and is skipped, leaving the room empty. GM writes maxId+1 here.
+            data.GeneralInfo.LastObj = nextInstanceId;
 
             Report($"{rooms.Length} room(s), {creationCodeCount} room creation code(s) found");
         }
