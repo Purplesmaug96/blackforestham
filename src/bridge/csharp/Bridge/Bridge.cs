@@ -650,8 +650,25 @@ namespace BridgeLib
                     };
                 }
 
+                // Collision masks. GameMaker stores a packed 1-bit-per-pixel mask
+                // (MSB first, row-major, rows padded to a whole byte) whenever the
+                // sprite's separation type is Precise; AxisAlignedRect and
+                // RotatedRect store no mask data and collide from the bounding box.
+                // Precise single and the shape kinds (ellipse/diamond) share one
+                // mask across all frames; PrecisePerFrame stores one per frame.
+                // As of 2024.6 the mask covers only the bounding box
+                // (marginRight-marginLeft+1 by marginBottom-marginTop+1) instead of
+                // the whole sprite.
+                bool wantsMasks = model.SepMasks == UndertaleSprite.SepMaskType.Precise;
+                bool shapeMask = wantsMasks && (spr.CollisionKind == 2 || spr.CollisionKind == 3);
+                bool perFrameMask = wantsMasks && spr.CollisionKind == 4;
+                (int maskWidth, int maskHeight) = wantsMasks ? MaskDimensions(data, model) : (0, 0);
+                bool maskDimensionsValid = wantsMasks && maskWidth > 0 && maskHeight > 0;
+                var preciseMaskData = new List<byte[]>();
+
                 string dir = Path.Combine(projectDir, PtrToString(spr.Dir).Replace('/', Path.DirectorySeparatorChar));
                 string[] guids = ReadPointerStringArray(spr.Frames, spr.FrameCount);
+                int frameIndex = 0;
                 foreach (string guid in guids)
                 {
                     if (guid.Length == 0)
@@ -699,6 +716,24 @@ namespace BridgeLib
                     data.TexturePageItems.Add(pageItem);
                     model.Textures.Add(new UndertaleSprite.TextureEntry { Texture = pageItem });
                     frameCount++;
+
+                    // Only the frames whose mask is actually referenced are turned
+                    // into bit data: the first frame for the shared mask, all of
+                    // them for PrecisePerFrame.
+                    if (maskDimensionsValid && !shapeMask && (perFrameMask || frameIndex == 0))
+                        preciseMaskData.Add(MaskFromAlpha(model, page, maskWidth, maskHeight));
+                    frameIndex++;
+                }
+
+                if (shapeMask && maskDimensionsValid)
+                {
+                    model.CollisionMasks.Add(new UndertaleSprite.MaskEntry(
+                        MaskFromShape(spr.CollisionKind, maskWidth, maskHeight), maskWidth, maskHeight));
+                }
+                else if (maskDimensionsValid)
+                {
+                    foreach (byte[] maskData in preciseMaskData)
+                        model.CollisionMasks.Add(new UndertaleSprite.MaskEntry(maskData, maskWidth, maskHeight));
                 }
 
                 if (name.Length != 0)
@@ -708,6 +743,79 @@ namespace BridgeLib
 
             Report($"{sprites.Length} sprite(s), {frameCount} frame(s), {pagesByPath.Count} texture page(s) found");
             return byName;
+        }
+
+        /// <summary>
+        /// Dimensions of a sprite's stored collision mask. GameMaker 2024.6+
+        /// stores masks at the bounding-box size (inclusive margins); older
+        /// runtimes store them across the full sprite.
+        /// </summary>
+        private static (int Width, int Height) MaskDimensions(UndertaleData data, UndertaleSprite model)
+        {
+            return data.IsVersionAtLeast(2024, 6)
+                ? UndertaleSprite.CalculateBboxMaskDimensions(model.MarginRight, model.MarginLeft, model.MarginBottom, model.MarginTop)
+                : UndertaleSprite.CalculateFullMaskDimensions((int)model.Width, (int)model.Height);
+        }
+
+        /// <summary>
+        /// Builds a mask from a frame's alpha channel: a pixel is solid when its
+        /// alpha is non-zero. The mask covers the bounding box, so mask-local
+        /// (mx,my) maps to sprite pixel (marginLeft+mx, marginTop+my). The source
+        /// image is this sprite's own texture page, so image pixels match sprite
+        /// pixels one-to-one.
+        /// </summary>
+        private static byte[] MaskFromAlpha(UndertaleSprite model, UndertaleEmbeddedTexture page, int maskWidth, int maskHeight)
+        {
+            GMImage raw = page.TextureData.Image.ConvertToRawBgra();
+            ReadOnlySpan<byte> pixels = raw.GetRawImageData();
+            int imageWidth = raw.Width;
+            int imageHeight = raw.Height;
+            int bytesPerRow = (maskWidth + 7) / 8;
+            byte[] mask = new byte[bytesPerRow * maskHeight];
+            for (int my = 0; my < maskHeight; my++)
+            {
+                int py = model.MarginTop + my;
+                if (py < 0 || py >= imageHeight)
+                    continue;
+                for (int mx = 0; mx < maskWidth; mx++)
+                {
+                    int px = model.MarginLeft + mx;
+                    if (px < 0 || px >= imageWidth)
+                        continue;
+                    if (pixels[(py * imageWidth + px) * 4 + 3] != 0)
+                        mask[my * bytesPerRow + (mx >> 3)] |= (byte)(1 << (7 - (mx & 7)));
+                }
+            }
+            return mask;
+        }
+
+        /// <summary>
+        /// Rasterizes GameMaker's built-in ellipse (2) or diamond (3) collision
+        /// shape across the bounding box. Shapes are defined in continuous
+        /// space using pixel centers against the box's half-extents; the diamond
+        /// uses the L1 form |dx|/rx + |dy|/ry &lt;= 1, the ellipse the L2 form.
+        /// This matches the masks GameMaker bakes into real data.win files.
+        /// </summary>
+        private static byte[] MaskFromShape(int collisionKind, int maskWidth, int maskHeight)
+        {
+            int bytesPerRow = (maskWidth + 7) / 8;
+            byte[] mask = new byte[bytesPerRow * maskHeight];
+            double centerX = maskWidth / 2.0;
+            double centerY = maskHeight / 2.0;
+            double radiusX = maskWidth / 2.0;
+            double radiusY = maskHeight / 2.0;
+            for (int my = 0; my < maskHeight; my++)
+            {
+                double dy = Math.Abs(my + 0.5 - centerY) / radiusY;
+                for (int mx = 0; mx < maskWidth; mx++)
+                {
+                    double dx = Math.Abs(mx + 0.5 - centerX) / radiusX;
+                    bool inside = collisionKind == 3 ? dx + dy <= 1.0 : dx * dx + dy * dy <= 1.0;
+                    if (inside)
+                        mask[my * bytesPerRow + (mx >> 3)] |= (byte)(1 << (7 - (mx & 7)));
+                }
+            }
+            return mask;
         }
 
         private static Dictionary<string, UndertaleGameObject> CreateObjects(UndertaleData data, string projectDir, GmObject[] objects,
